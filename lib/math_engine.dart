@@ -195,7 +195,17 @@ const _openerOf = {Op.rparen: Op.lparen, Op.floorR: Op.floorL, Op.ceilR: Op.ceil
 ///
 /// In the slot that holds "=", [afterEq] limits the insertion to one side of
 /// it (false = before, true = after); null accepts either side.
-List<List<Op>>? place(String digits, List<List<Op>> gaps, int slot, Op op, {bool? afterEq}) {
+///
+/// With [exact] the symbol goes at that index of the slot or nowhere, which is
+/// how one is typed between two symbols already there.
+List<List<Op>>? place(
+  String digits,
+  List<List<Op>> gaps,
+  int slot,
+  Op op, {
+  bool? afterEq,
+  int? exact,
+}) {
   final before = _scan(linearize(digits, gaps)).bad.length;
   final base = [
     for (final g in gaps) [...g]..removeWhere((o) => op == Op.equals && o == Op.equals),
@@ -203,11 +213,12 @@ List<List<Op>>? place(String digits, List<List<Op>> gaps, int slot, Op op, {bool
   const closers = {Op.rparen, Op.floorR, Op.ceilR, Op.fact, Op.abs, Op.equals};
   final end = base[slot].length;
   final eq = base[slot].indexOf(Op.equals);
-  final hi = eq >= 0 && afterEq == false ? eq : end;
-  final lo = eq >= 0 && afterEq == true ? eq + 1 : 0;
+  if (exact != null && (exact < 0 || exact > end)) return null;
+  final hi = exact ?? (eq >= 0 && afterEq == false ? eq : end);
+  final lo = exact ?? (closers.contains(op) ? (eq >= 0 && afterEq == true ? eq + 1 : 0) : hi);
   List<List<Op>>? best;
   var bestOpen = 0;
-  for (var j = hi; j >= (closers.contains(op) ? lo : hi); j--) {
+  for (var j = hi; j >= lo; j--) {
     final c = [for (final g in base) [...g]];
     c[slot].insert(j, op);
     final s = _scan(linearize(digits, c));

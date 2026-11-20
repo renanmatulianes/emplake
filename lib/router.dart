@@ -10,6 +10,7 @@ import 'history_page.dart';
 import 'l10n/app_localizations.dart';
 import 'login_page.dart';
 import 'math_engine.dart';
+import 'onboarding.dart';
 import 'settings.dart';
 
 const _tabs = ['/game', '/history', null, '/settings']; // null = help dialog
@@ -86,6 +87,7 @@ class _Shell extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.only(top: _dockHeadroom),
               child: CurvedNavigationBar(
+                key: navBarKey,
                 index: _tabs.indexOf(location).clamp(0, _tabs.length - 1),
                 height: 64,
                 color: cs.primaryContainer,
@@ -138,7 +140,7 @@ void showHelp(BuildContext context) {
   final theme = Theme.of(context);
   showDialog<void>(
     context: context,
-    builder: (context) => AlertDialog(
+    builder: (dialog) => AlertDialog(
       icon: const Icon(Icons.help_outline),
       title: Text(l.helpTitle),
       content: ConstrainedBox(
@@ -160,7 +162,18 @@ void showHelp(BuildContext context) {
           ]),
         ),
       ),
-      actions: [TextButton(onPressed: () => Navigator.pop(context), child: Text(l.close))],
+      actions: [
+        TextButton(
+          onPressed: () {
+            Navigator.pop(dialog);
+            // The tour points at the game screen, so go there first.
+            context.go('/game');
+            ProviderScope.containerOf(context).read(tourRequestProvider.notifier).ask();
+          },
+          child: Text(l.tourReplay),
+        ),
+        TextButton(onPressed: () => Navigator.pop(dialog), child: Text(l.close)),
+      ],
     ),
   );
 }

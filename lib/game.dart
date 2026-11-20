@@ -9,6 +9,7 @@ import 'package:loading_animation_widget/loading_animation_widget.dart';
 import 'calculator.dart';
 import 'l10n/app_localizations.dart';
 import 'math_engine.dart';
+import 'onboarding.dart';
 import 'repository.dart';
 import 'settings.dart';
 import 'sound.dart';
@@ -20,7 +21,7 @@ class GameState {
     required this.gaps,
     this.number,
     this.cursor = 0,
-    this.after = false,
+    this.at = 0,
     this.score = 0,
     this.shake = 0,
     this.busy = false,
@@ -33,25 +34,41 @@ class GameState {
   final Level level;
   final String? number;
   final List<List<Op>> gaps; // 5 slots around the 4 digits
-  final int cursor, score, shake;
-  final bool busy, exhausted;
 
-  /// In the slot that holds "=", whether the cursor is after it (else before).
-  final bool after;
+  /// The cursor: slot [cursor], and [at] = index inside it where the next
+  /// symbol is typed (0 = before its first symbol).
+  final int cursor, at;
+  final int score, shake;
+  final bool busy, exhausted;
   final Check? verdict;
   final CloudError? saveError;
   final Op? rejected;
 
-  /// Every place a symbol can be typed, left to right: one per slot, and two
-  /// (before and after "=") for the slot that holds it.
-  List<(int, bool)> get positions => [
-    for (var g = 0; g < gaps.length; g++) ...[
-      (g, false),
-      if (gaps[g].contains(Op.equals)) (g, true),
-    ],
+  /// Index right after the last symbol of one side of [slot]: before its "="
+  /// or, with [after] (and in slots without "="), at its very end.
+  static int endOf(List<Op> slot, bool after) {
+    final eq = slot.indexOf(Op.equals);
+    return eq < 0 || after ? slot.length : eq;
+  }
+
+  /// In the slot that holds "=", whether the cursor is after it (else before).
+  bool get after {
+    final eq = gaps[cursor].indexOf(Op.equals);
+    return eq >= 0 && at > eq;
+  }
+
+  /// Whether the cursor is at the end of its side (where a "_" is drawn)
+  /// rather than between two symbols.
+  bool get atEnd => at == endOf(gaps[cursor], after);
+
+  /// Every place a symbol can be typed, left to right: before, between and
+  /// after the symbols of each slot.
+  List<(int, int)> get positions => [
+    for (var g = 0; g < gaps.length; g++)
+      for (var k = 0; k <= gaps[g].length; k++) (g, k),
   ];
 
-  /// Whether some operator of the level still fits at the given position.
+  /// Whether some operator of the level still fits at the end of a side.
   bool canExtend(int g, bool after) {
     final side = gaps[g].contains(Op.equals) ? after : null;
     return level.ops.any((op) => place(number ?? '0000', gaps, g, op, afterEq: side) != null);
@@ -59,18 +76,18 @@ class GameState {
 
   /// [verdict], [saveError] and [rejected] are cleared unless passed again.
   GameState copyWith({
-    Level? level, String? number, List<List<Op>>? gaps, int? cursor, int? score, int? shake, //
-    bool? busy, bool? exhausted, bool? after, Check? verdict, CloudError? saveError, Op? rejected,
+    Level? level, String? number, List<List<Op>>? gaps, int? cursor, int? at, int? score, int? shake, //
+    bool? busy, bool? exhausted, Check? verdict, CloudError? saveError, Op? rejected,
   }) => GameState(
     level: level ?? this.level,
     number: number ?? this.number,
     gaps: gaps ?? this.gaps,
     cursor: cursor ?? this.cursor,
+    at: at ?? this.at,
     score: score ?? this.score,
     shake: shake ?? this.shake,
     busy: busy ?? this.busy,
     exhausted: exhausted ?? this.exhausted,
-    after: after ?? this.after,
     verdict: verdict,
     saveError: saveError,
     rejected: rejected,
@@ -120,7 +137,7 @@ class GameController extends Notifier<GameState> {
       for (var i = 0; i < 10000; i++) i.toString().padLeft(4, '0'),
     ].where((n) => _playable(state.level, n)).toList();
     if (free.isEmpty) {
-      state = state.copyWith(exhausted: true, gaps: _fresh(), after: false);
+      state = state.copyWith(exhausted: true, gaps: _fresh(), at: 0);
       return;
     }
     // Skipping the only number left just shows it again.
@@ -128,63 +145,84 @@ class GameController extends Notifier<GameState> {
     final n = free[_rng.nextInt(free.length)];
     ref.read(prefsProvider).setString('number', n);
     state = state.copyWith(
-      number: n, gaps: _fresh(), cursor: 0, after: false, exhausted: false, verdict: verdict, //
+      number: n, gaps: _fresh(), cursor: 0, at: 0, exhausted: false, verdict: verdict, //
     );
   }
 
   void setLevel(Level l) {
     ref.read(prefsProvider).setString('level', l.name);
-    state = state.copyWith(level: l, gaps: _fresh(), after: false, exhausted: false);
+    state = state.copyWith(level: l, gaps: _fresh(), at: 0, exhausted: false);
     final n = state.number;
     if (n == null || !_playable(l, n)) _next();
   }
 
-  /// Selects a slot; [after] picks the side of "=" in the slot that holds it.
+  /// Puts the cursor at the end of a slot; [after] picks the side of "=" in
+  /// the slot that holds it.
   void select(int g, {bool after = false}) {
     final slot = g.clamp(0, 4);
-    state = state.copyWith(cursor: slot, after: after && _hasEq(state.gaps[slot]));
+    state = state.copyWith(cursor: slot, at: GameState.endOf(state.gaps[slot], after));
+  }
+
+  /// Puts the cursor before symbol [k] of slot [g], to type between symbols.
+  void selectAt(int g, int k) {
+    final slot = g.clamp(0, 4);
+    state = state.copyWith(cursor: slot, at: k.clamp(0, state.gaps[slot].length));
   }
 
   /// Moves the cursor through every place a symbol can go, left to right.
   void step(int delta) {
     final all = state.positions;
-    final i = (all.indexOf((state.cursor, state.after)) + delta).clamp(0, all.length - 1);
-    select(all[i].$1, after: all[i].$2);
+    final here = all.indexOf((state.cursor, state.at));
+    final (g, k) = all[((here < 0 ? 0 : here) + delta).clamp(0, all.length - 1)];
+    selectAt(g, k);
   }
 
-  /// False (and a shake) when [op] cannot stand in the selected slot. Next to
-  /// "=" a symbol that only fits on the other side goes there, and the cursor
-  /// follows it.
+  /// False (and a shake) when [op] cannot stand where the cursor is.
+  ///
+  /// Between two symbols it goes exactly there. At the end of a side the slot
+  /// may reorder it (")" lands before "+"), and next to "=" a symbol that only
+  /// fits on the other side goes there. The cursor ends up right after it.
   bool insert(Op op) {
     final n = state.number ?? '0000';
-    final split = op != Op.equals && _hasEq(state.gaps[state.cursor]);
-    var after = split && state.after;
-    var gaps = place(n, state.gaps, state.cursor, op, afterEq: split ? after : null);
-    if (gaps == null && split) {
-      after = !after;
-      gaps = place(n, state.gaps, state.cursor, op, afterEq: after);
+    final g = state.cursor;
+    List<List<Op>>? gaps;
+    var at = 0;
+    if (op == Op.equals) {
+      gaps = place(n, state.gaps, g, op);
+      at = gaps?[g].indexOf(Op.equals) ?? 0;
+    } else if (!state.atEnd) {
+      gaps = place(n, state.gaps, g, op, exact: state.at);
+      at = state.at + 1;
+    } else {
+      final split = _hasEq(state.gaps[g]);
+      var after = split && state.after;
+      gaps = place(n, state.gaps, g, op, afterEq: split ? after : null);
+      if (gaps == null && split) {
+        after = !after;
+        gaps = place(n, state.gaps, g, op, afterEq: after);
+      }
+      if (gaps != null) at = GameState.endOf(gaps[g], after);
     }
     state = gaps == null
         ? state.copyWith(rejected: op, shake: state.shake + 1)
-        : state.copyWith(gaps: gaps, after: after);
+        : state.copyWith(gaps: gaps, at: at);
     return gaps != null;
   }
 
-  /// Removes the last symbol on the cursor's side. The "=" is never removed,
+  /// Removes the symbol right before the cursor. The "=" is never removed,
   /// only moved.
   void backspace() {
     final gaps = _copy();
     final slot = gaps[state.cursor];
-    final eq = slot.indexOf(Op.equals);
-    final i = eq < 0 ? slot.length - 1 : (state.after ? (slot.length - 1 > eq ? slot.length - 1 : -1) : eq - 1);
-    if (i < 0) return;
+    final i = state.at - 1;
+    if (i < 0 || i >= slot.length || slot[i] == Op.equals) return;
     slot.removeAt(i);
-    state = state.copyWith(gaps: gaps);
+    state = state.copyWith(gaps: gaps, at: i);
   }
 
   void clear() => state = state.copyWith(
     gaps: _fresh(state.gaps.indexWhere((g) => g.contains(Op.equals))),
-    after: false,
+    at: 0,
   );
 
   void skip() => _next(exclude: state.number);
@@ -322,6 +360,9 @@ class _GamePageState extends ConsumerState<GamePage> {
   }
 }
 
+// How many "show the tour" requests have been served; see [tourRequestProvider].
+int _tourRequestsHandled = 0;
+
 /// The game screen, drawn as a retro LCD calculator with a receipt printer.
 class _Board extends ConsumerStatefulWidget {
   const _Board();
@@ -337,6 +378,55 @@ class _BoardState extends ConsumerState<_Board> {
   /// True while "=" is picked up: the next "_" tapped receives it.
   bool _movingEq = false;
 
+  /// True for a moment after a correct answer, while the solved equation stays
+  /// on the display so the player sees that it was right.
+  bool _celebrating = false;
+
+  // Parts of the screen the guided tour points at.
+  final _lcdKey = GlobalKey(), _equationKey = GlobalKey(), _equalsKey = GlobalKey();
+  final _receiptKey = GlobalKey(), _levelKey = GlobalKey(), _opsKey = GlobalKey();
+  final _editKey = GlobalKey(), _skipKey = GlobalKey(), _verifyKey = GlobalKey();
+  bool _touring = false;
+
+  /// Remembered per account on this device, so each player sees the tour once.
+  String get _tourPref => 'tourSeen:${ref.read(repoProvider).uid}';
+
+  @override
+  void initState() {
+    super.initState();
+    final seen = ref.read(prefsProvider).getBool(_tourPref) ?? false;
+    // Also runs when it was asked for (help dialog) before this page existed.
+    if (!seen || ref.read(tourRequestProvider) > _tourRequestsHandled) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _startTour());
+    }
+  }
+
+  /// Walks a first-time player through what each part of the screen is for.
+  Future<void> _startTour() async {
+    if (_touring || !mounted) return;
+    _touring = true;
+    _tourRequestsHandled = ref.read(tourRequestProvider);
+    // Lets fonts and the entrance animations settle so the highlights line up.
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+    if (mounted) {
+      if (_movingEq) setState(() => _movingEq = false);
+      await showTour(context, [
+        TourStep(_lcdKey, (l) => l.tourDisplayTitle, (l) => l.tourDisplayBody),
+        TourStep(_equationKey, (l) => l.tourMarksTitle, (l) => l.tourMarksBody),
+        TourStep(_equalsKey, (l) => l.tourEqualsTitle, (l) => l.tourEqualsBody),
+        TourStep(_receiptKey, (l) => l.tourFormulaTitle, (l) => l.tourFormulaBody),
+        TourStep(_levelKey, (l) => l.tourLevelTitle, (l) => l.tourLevelBody),
+        TourStep(_opsKey, (l) => l.tourOperatorsTitle, (l) => l.tourOperatorsBody),
+        TourStep(_editKey, (l) => l.tourEditTitle, (l) => l.tourEditBody),
+        TourStep(_skipKey, (l) => l.tourSkipTitle, (l) => l.tourSkipBody),
+        TourStep(_verifyKey, (l) => l.tourVerifyTitle, (l) => l.tourVerifyBody),
+        TourStep(navBarKey, (l) => l.tourMenuTitle, (l) => l.tourMenuBody),
+      ]);
+      if (mounted) await ref.read(prefsProvider).setBool(_tourPref, true);
+    }
+    _touring = false;
+  }
+
   GameController get _ctrl => ref.read(gameProvider.notifier);
 
   void _tap(VoidCallback f) {
@@ -349,10 +439,15 @@ class _BoardState extends ConsumerState<_Board> {
     final ok = await _ctrl.verify();
     if (!mounted) return;
     playSfx(ref, ok ? Sfx.correct : Sfx.wrong);
-    if (ok) {
-      _flyBack();
-      _ctrl.nextAfterSolve();
-    }
+    if (!ok) return;
+    // Hold the solved equation on the display before dealing the next plate,
+    // otherwise the player cannot tell that the answer was accepted.
+    setState(() => _celebrating = true);
+    await Future<void>.delayed(const Duration(milliseconds: 2200));
+    if (!mounted) return;
+    setState(() => _celebrating = false);
+    _flyBack();
+    _ctrl.nextAfterSolve();
   }
 
   void _clear() {
@@ -402,11 +497,14 @@ class _BoardState extends ConsumerState<_Board> {
 
   /// One slot between digits: its symbols, plus a "_" wherever another symbol
   /// can still be typed. The slot holding "=" has one "_" on each side of it.
+  /// Tapping a symbol moves the cursor next to it, to type between symbols.
   Widget _slot(int g, GameState s, CalcPalette p) {
     final l = AppLocalizations.of(context);
     final ops = s.gaps[g];
     final eq = ops.indexOf(Op.equals);
-    final locked = s.busy || s.exhausted;
+    final locked = s.busy || s.exhausted || _celebrating;
+    // Index where the cursor stands between two symbols of this slot, if it does.
+    final caret = g == s.cursor && !s.atEnd ? s.at : -1;
 
     Widget token(int j) => Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -422,8 +520,38 @@ class _BoardState extends ConsumerState<_Board> {
       ),
     );
 
+    Widget mark({required bool lit, required bool blink, double width = 26}) {
+      final bar = Container(
+        height: 4,
+        width: width,
+        color: lit ? p.ink : p.ink.withValues(alpha: _movingEq ? 0.6 : 0.3),
+      );
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 3),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          SizedBox(height: 90, width: width),
+          blink ? Blink(child: bar) : bar,
+        ]),
+      );
+    }
+
+    // A placed symbol: tapping its left or right half puts the cursor there.
+    Widget symbol(int j) => Builder(
+      builder: (context) => GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapUp: locked
+            ? null
+            : (d) {
+                if (_movingEq) return _dropEquals(g);
+                final right = d.localPosition.dx > context.size!.width / 2;
+                _tap(() => _ctrl.selectAt(g, right ? j + 1 : j));
+              },
+        child: token(j),
+      ),
+    );
+
     // The "=" on the display: drag it to a "_", or tap it and then tap a "_".
-    Widget equals() {
+    Widget equalsSign() {
       final sign = _movingEq ? Blink(child: token(eq)) : token(eq);
       if (locked) return sign;
       return Tooltip(
@@ -457,40 +585,34 @@ class _BoardState extends ConsumerState<_Board> {
       );
     }
 
-    // Symbols [from, to) and the "_" that follows them; tapping either selects it.
+    // Symbols [from, to) and the "_" that follows them.
     Widget side(int from, int to, bool after) {
-      final selected = g == s.cursor && after == s.after;
+      final selected = g == s.cursor && s.at == to;
       final open = selected || from == to || _movingEq || s.canExtend(g, after);
       return DragTarget<Op>(
         onAcceptWithDetails: (_) => _dropEquals(g),
-        builder: (context, incoming, _) {
-          final lit = selected || incoming.isNotEmpty;
-          final bar = Container(
-            height: 4,
-            width: 26,
-            color: lit ? p.ink : p.ink.withValues(alpha: _movingEq ? 0.6 : 0.3),
-          );
-          return Semantics(
-            button: true,
-            selected: selected,
-            label: l.slotLabel(s.positions.indexOf((g, after)) + 1),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => _movingEq ? _dropEquals(g) : _tap(() => _ctrl.select(g, after: after)),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                for (var j = from; j < to; j++) token(j),
-                if (open)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 3),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      const SizedBox(height: 90, width: 26),
-                      selected && !_movingEq ? Blink(child: bar) : bar,
-                    ]),
-                  ),
-              ]),
+        builder: (context, incoming, _) => Row(mainAxisSize: MainAxisSize.min, children: [
+          for (var j = from; j < to; j++) ...[
+            if (j == caret) mark(lit: true, blink: true, width: 14),
+            symbol(j),
+          ],
+          if (open)
+            Semantics(
+              button: true,
+              selected: selected,
+              label: l.slotLabel(s.positions.indexOf((g, to)) + 1),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: locked
+                    ? null
+                    : () => _movingEq ? _dropEquals(g) : _tap(() => _ctrl.select(g, after: after)),
+                child: mark(
+                  lit: selected || incoming.isNotEmpty,
+                  blink: selected && !_movingEq && !locked,
+                ),
+              ),
             ),
-          );
-        },
+        ]),
       );
     }
 
@@ -499,7 +621,7 @@ class _BoardState extends ConsumerState<_Board> {
         side(0, ops.length, false)
       else ...[
         side(0, eq, false),
-        equals(),
+        KeyedSubtree(key: _equalsKey, child: equalsSign()),
         side(eq + 1, ops.length, true),
       ],
     ]);
@@ -508,9 +630,10 @@ class _BoardState extends ConsumerState<_Board> {
   /// Bottom LCD line: the most relevant message for the current state.
   ({String text, bool alert}) _message(AppLocalizations l, GameState s, Check live) {
     if (s.exhausted) return (text: l.allSolved, alert: false);
+    if (_celebrating) return (text: l.correct(s.level.points), alert: true);
     if (_movingEq) return (text: l.moveEqualsHint, alert: false);
     if (s.saveError != null) return (text: l.saveError(cloudErrorText(l, s.saveError!)), alert: true);
-    if (s.rejected case final op?) return (text: l.cantPlace(op.symbol, s.positions.indexOf((s.cursor, s.after)) + 1), alert: true);
+    if (s.rejected case final op?) return (text: l.cantPlace(op.symbol), alert: true);
     if (s.verdict case final v?) {
       if (v.solved) return (text: l.correct(s.level.points), alert: false);
       return (text: v.error != null ? errorText(l, v.error!) : l.wrong(fmt(l, v.left!), fmt(l, v.right!)), alert: true);
@@ -525,11 +648,12 @@ class _BoardState extends ConsumerState<_Board> {
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
     final s = ref.watch(gameProvider);
+    ref.listen(tourRequestProvider, (_, _) => _startTour());
     final cs = Theme.of(context).colorScheme;
     final p = CalcPalette.of(context);
     final number = s.number ?? '0000';
     final live = check(number, s.gaps, s.level);
-    final locked = s.busy || s.exhausted;
+    final locked = s.busy || s.exhausted || _celebrating;
     final msg = _message(l, s, live);
     final engraving = Color.lerp(p.body, p.dark ? Colors.white : Colors.black, 0.45)!;
 
@@ -582,18 +706,22 @@ class _BoardState extends ConsumerState<_Board> {
             ),
           ]),
           const SizedBox(height: 8),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              for (var g = 0; g < 5; g++) ...[
-                _slot(g, s, p),
-                if (g < 4)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: SevenSegment(number[g], color: p.ink, glow: p.dark),
-                  ),
-              ],
-            ]),
+          _Flash(
+            key: _equationKey,
+            active: _celebrating,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                for (var g = 0; g < 5; g++) ...[
+                  _slot(g, s, p),
+                  if (g < 4)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: SevenSegment(number[g], color: p.ink, glow: p.dark),
+                    ),
+                ],
+              ]),
+            ),
           ),
           const SizedBox(height: 8),
           Semantics(
@@ -611,6 +739,7 @@ class _BoardState extends ConsumerState<_Board> {
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                width: msg.alert ? double.infinity : null,
                 color: msg.alert ? p.ink : Colors.transparent,
                 child: Text(
                   msg.text,
@@ -681,12 +810,12 @@ class _BoardState extends ConsumerState<_Board> {
     ];
 
     final keys = [
-      ...grid([
+      Column(key: _opsKey, mainAxisSize: MainAxisSize.min, children: grid([
         for (final op in Op.values)
           if (op == Op.equals || s.level.ops.contains(op)) opKey(op),
-      ]),
+      ])),
       const SizedBox(height: 6),
-      ...grid([
+      Column(key: _editKey, mainAxisSize: MainAxisSize.min, children: grid([
         CalcKey(
           tooltip: l.prevSlot,
           color: p.grayKey,
@@ -706,14 +835,15 @@ class _BoardState extends ConsumerState<_Board> {
           child: const Icon(Icons.backspace_outlined),
         ),
         CalcKey(color: cs.error, onPressed: locked ? null : () => _tap(_clear), child: label(l.clear)),
-      ]),
+      ])),
       Row(children: [
         Expanded(
           child: Padding(
             padding: const EdgeInsets.all(5),
             child: CalcKey(
+              key: _skipKey,
               color: cs.secondary,
-              onPressed: s.busy ? null : () => _tap(_ctrl.skip),
+              onPressed: s.busy || _celebrating ? null : () => _tap(_ctrl.skip),
               child: label(l.skip),
             ),
           ),
@@ -723,6 +853,7 @@ class _BoardState extends ConsumerState<_Board> {
           child: Padding(
             padding: const EdgeInsets.all(5),
             child: CalcKey(
+              key: _verifyKey,
               color: cs.primary,
               onPressed: locked ? null : _verify,
               child: s.busy
@@ -747,15 +878,16 @@ class _BoardState extends ConsumerState<_Board> {
         Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Padding(padding: const EdgeInsets.symmetric(horizontal: 18), child: brand),
           const SizedBox(height: 14),
-          lcd,
-          receipt,
+          KeyedSubtree(key: _lcdKey, child: lcd),
+          KeyedSubtree(key: _receiptKey, child: receipt),
           const SizedBox(height: 8),
           ModeSwitch<Level>(
+            key: _levelKey,
             values: Level.values,
             selected: s.level,
             label: (v) => levelName(l, v),
             palette: p,
-            onChanged: s.busy ? null : (v) => _tap(() => _ctrl.setLevel(v)),
+            onChanged: s.busy || _celebrating ? null : (v) => _tap(() => _ctrl.setLevel(v)),
           ),
           const SizedBox(height: 8),
           ...keys,
@@ -804,4 +936,42 @@ class _Shake extends StatelessWidget {
     },
     child: child,
   );
+}
+
+/// Makes its child pulse while [active]: the display flashing a right answer.
+/// Stays still when the OS asks for reduced motion.
+class _Flash extends StatefulWidget {
+  const _Flash({super.key, required this.active, required this.child});
+  final bool active;
+  final Widget child;
+
+  @override
+  State<_Flash> createState() => _FlashState();
+}
+
+class _FlashState extends State<_Flash> with SingleTickerProviderStateMixin {
+  late final _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 280), value: 1);
+
+  @override
+  void didUpdateWidget(_Flash old) {
+    super.didUpdateWidget(old);
+    if (widget.active == old.active) return;
+    if (widget.active && !MediaQuery.of(context).disableAnimations) {
+      _c.repeat(reverse: true);
+    } else {
+      _c
+        ..stop()
+        ..value = 1;
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      FadeTransition(opacity: Tween(begin: 0.3, end: 1.0).animate(_c), child: widget.child);
 }

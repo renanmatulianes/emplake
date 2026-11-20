@@ -377,8 +377,8 @@ abstract class AppLocalizations {
   /// No description provided for @cantPlace.
   ///
   /// In en, this message translates to:
-  /// **'“{token}” cannot go in slot {slot} here.'**
-  String cantPlace(String token, int slot);
+  /// **'“{token}” cannot go where the cursor is.'**
+  String cantPlace(String token);
 
   /// No description provided for @opPlus.
   ///
@@ -635,7 +635,7 @@ abstract class AppLocalizations {
   /// No description provided for @helpBody.
   ///
   /// In en, this message translates to:
-  /// **'A four-digit plate number appears. Keep the digits in their order and insert operators around them so that the equation becomes true. Digits with nothing between them form a single number (4 and 1 make 41).\n\nEvery “_” mark is a place where symbols can go: before, between and after the digits, and on both sides of the = sign. Tap a “_” to select it, then tap operators to insert them there. Whenever another symbol still fits after the ones you placed, a new “_” shows up, so you can chain symbols such as √( or )!; impossible combinations such as ++ are refused. The backspace key removes the last symbol next to the selected “_”. The = sign is always on the plate: to move it, drag it to another “_”, or tap it and then tap a “_”, or select a “_” and press the = key.\n\nTap Check to validate your answer. Correct answers score points (Easy 1, Intermediate 2, Advanced 3, Hard 4) and that number never shows up again at that level. Only plates that have a solution are dealt. Stuck? Skip the number.'**
+  /// **'A four-digit plate number appears. Keep the digits in their order and insert operators around them so that the equation becomes true. Digits with nothing between them form a single number (4 and 1 make 41).\n\nEvery “_” mark is a place where symbols can go: before, between and after the digits, and on both sides of the = sign. Tap a “_” to select it, then tap operators to insert them there. Whenever another symbol still fits after the ones you placed, a new “_” shows up, so you can chain symbols such as √( or )!; impossible combinations such as ++ are refused. To type a symbol between two others, tap one of them (or use the arrow keys): the cursor moves next to it and the new symbol goes exactly there. The backspace key removes the symbol right before the cursor. The = sign is always on the plate: to move it, drag it to another “_”, or tap it and then tap a “_”, or select a “_” and press the = key.\n\nTap Check to validate your answer. Correct answers score points (Easy 1, Intermediate 2, Advanced 3, Hard 4) and that number never shows up again at that level. Only plates that have a solution are dealt. Stuck? Skip the number.'**
   String get helpBody;
 
   /// No description provided for @helpExample.
@@ -655,6 +655,162 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Close'**
   String get close;
+
+  /// No description provided for @tourStep.
+  ///
+  /// In en, this message translates to:
+  /// **'{n} of {total}'**
+  String tourStep(int n, int total);
+
+  /// No description provided for @tourSkip.
+  ///
+  /// In en, this message translates to:
+  /// **'Skip tour'**
+  String get tourSkip;
+
+  /// No description provided for @tourBack.
+  ///
+  /// In en, this message translates to:
+  /// **'Back'**
+  String get tourBack;
+
+  /// No description provided for @tourNext.
+  ///
+  /// In en, this message translates to:
+  /// **'Next'**
+  String get tourNext;
+
+  /// No description provided for @tourDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Start playing'**
+  String get tourDone;
+
+  /// No description provided for @tourReplay.
+  ///
+  /// In en, this message translates to:
+  /// **'Show the tour'**
+  String get tourReplay;
+
+  /// No description provided for @tourDisplayTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'The display'**
+  String get tourDisplayTitle;
+
+  /// No description provided for @tourDisplayBody.
+  ///
+  /// In en, this message translates to:
+  /// **'The four digits of the plate are here, in the order you must keep. Above them are the level and your score. The bottom line tells you how much each side of the equation is worth, or what is wrong with it.'**
+  String get tourDisplayBody;
+
+  /// No description provided for @tourMarksTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Where symbols go'**
+  String get tourMarksTitle;
+
+  /// No description provided for @tourMarksBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Each “_” is a place for symbols. Tap one to select it (it blinks), then tap operators. When another symbol still fits, a new “_” appears beside it. To type between two symbols, tap one of them.'**
+  String get tourMarksBody;
+
+  /// No description provided for @tourEqualsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'The = sign'**
+  String get tourEqualsTitle;
+
+  /// No description provided for @tourEqualsBody.
+  ///
+  /// In en, this message translates to:
+  /// **'It splits the plate into the two sides of the equation. To change where the plate is split, drag it to another “_”, or tap it and then tap a “_”.'**
+  String get tourEqualsBody;
+
+  /// No description provided for @tourFormulaTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Rendered formula'**
+  String get tourFormulaTitle;
+
+  /// No description provided for @tourFormulaBody.
+  ///
+  /// In en, this message translates to:
+  /// **'As you type, your equation is drawn here in mathematical notation, with roots, fractions and exponents, so you can check that it means what you intended.'**
+  String get tourFormulaBody;
+
+  /// No description provided for @tourLevelTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Level'**
+  String get tourLevelTitle;
+
+  /// No description provided for @tourLevelBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap or slide to choose a level. Harder levels have fewer operators and are worth more points: Easy 1, Intermediate 2, Advanced 3, Hard 4.'**
+  String get tourLevelBody;
+
+  /// No description provided for @tourOperatorsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Operators'**
+  String get tourOperatorsTitle;
+
+  /// No description provided for @tourOperatorsBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap an operator to insert it where the cursor is. The keys change with the level. Rest the pointer on a key, or long-press it, to see its name.'**
+  String get tourOperatorsBody;
+
+  /// No description provided for @tourEditTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Moving and erasing'**
+  String get tourEditTitle;
+
+  /// No description provided for @tourEditBody.
+  ///
+  /// In en, this message translates to:
+  /// **'The arrows move the cursor through every place a symbol can go. The backspace key removes the symbol before the cursor, and Clear removes them all.'**
+  String get tourEditBody;
+
+  /// No description provided for @tourSkipTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Skip number'**
+  String get tourSkipTitle;
+
+  /// No description provided for @tourSkipBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Stuck? Skip to another plate. Every plate you get has at least one solution.'**
+  String get tourSkipBody;
+
+  /// No description provided for @tourVerifyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Check'**
+  String get tourVerifyTitle;
+
+  /// No description provided for @tourVerifyBody.
+  ///
+  /// In en, this message translates to:
+  /// **'When both sides are equal, tap Check. A right answer scores and brings a new plate. A wrong one shows why and leaves your symbols in place, so you can keep trying.'**
+  String get tourVerifyBody;
+
+  /// No description provided for @tourMenuTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Menu'**
+  String get tourMenuTitle;
+
+  /// No description provided for @tourMenuBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Play, the plates you have solved, help (where you can see this tour again) and settings: theme, colors, font, language and sound.'**
+  String get tourMenuBody;
 }
 
 class _AppLocalizationsDelegate

@@ -1,9 +1,12 @@
 // The "_" marks around "=" and the plates without a solution.
+import 'dart:async';
+
 import 'package:emplake/game.dart';
 import 'package:emplake/math_engine.dart';
 import 'package:emplake/repository.dart';
 import 'package:emplake/settings.dart';
 import 'package:emplake/unsolvable.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -33,6 +36,7 @@ Future<ProviderContainer> game(Map<String, Object> prefs) async {
 }
 
 void main() {
+  cloudErrorTests();
   group('both sides of "="', () {
     test('place can be limited to one side of "="', () {
       final g = [_, _, [Op.equals], _, _];
@@ -46,14 +50,13 @@ void main() {
     test('the "=" slot has two cursor positions and the arrows walk through all six', () async {
       final c = await game({'number': '8131'});
       final g = c.read(gameProvider.notifier);
-      expect(c.read(gameProvider).positions,
-          [(0, false), (1, false), (2, false), (2, true), (3, false), (4, false)]);
+      expect(c.read(gameProvider).positions, [(0, 0), (1, 0), (2, 0), (2, 1), (3, 0), (4, 0)]);
       final seen = <(int, bool)>[];
       for (var i = 0; i < 8; i++) {
         seen.add((c.read(gameProvider).cursor, c.read(gameProvider).after));
         g.step(1);
       }
-      expect(seen.toSet().length, 6);
+      expect(seen.toSet(), {(0, false), (1, false), (2, false), (2, true), (3, false), (4, false)});
       expect(seen.last, (4, false));
       g.step(-99);
       expect(c.read(gameProvider).cursor, 0);
@@ -77,7 +80,66 @@ void main() {
       final s = c.read(gameProvider);
       expect(s.gaps[3], [Op.equals]);
       expect((s.cursor, s.after), (3, false));
-      expect(s.positions.contains((2, true)), isFalse);
+      expect(s.positions.where((p) => p.$1 == 2), [(2, 0)]);
+    });
+
+    test('a symbol can be typed between two others, exactly where the cursor is', () async {
+      final c = await game({'number': '8131'});
+      final g = c.read(gameProvider.notifier);
+      g.select(0);
+      g.insert(Op.lparen);
+      g.insert(Op.lparen); // ( ( 8
+      g.selectAt(0, 1);
+      expect(c.read(gameProvider).atEnd, isFalse);
+      expect(g.insert(Op.minus), isTrue); // ( − ( 8
+      expect(c.read(gameProvider).gaps[0], [Op.lparen, Op.minus, Op.lparen]);
+      expect(c.read(gameProvider).at, 2, reason: 'the cursor follows the new symbol');
+      expect(g.insert(Op.sqrt), isTrue); // ( − √ ( 8
+      expect(c.read(gameProvider).gaps[0], [Op.lparen, Op.minus, Op.sqrt, Op.lparen]);
+      g.selectAt(0, 0);
+      expect(g.insert(Op.minus), isTrue); // − ( − √ ( 8
+      expect(c.read(gameProvider).gaps[0].first, Op.minus);
+    });
+
+    test('between symbols an impossible one is refused and nothing moves', () async {
+      final c = await game({'number': '8131'});
+      final g = c.read(gameProvider.notifier);
+      g.select(0);
+      g.insert(Op.lparen);
+      g.insert(Op.lparen);
+      g.selectAt(0, 1);
+      expect(g.insert(Op.plus), isFalse, reason: '( + ( 8');
+      expect(g.insert(Op.rparen), isFalse, reason: '( ) ( 8');
+      final s = c.read(gameProvider);
+      expect(s.gaps[0], [Op.lparen, Op.lparen]);
+      expect(s.at, 1);
+    });
+
+    test('backspace between symbols removes the one before the cursor', () async {
+      final c = await game({'number': '8131'});
+      final g = c.read(gameProvider.notifier);
+      g.select(0);
+      g.insert(Op.minus);
+      g.insert(Op.sqrt);
+      g.insert(Op.lparen); // − √ ( 8
+      g.selectAt(0, 2);
+      g.backspace();
+      expect(c.read(gameProvider).gaps[0], [Op.minus, Op.lparen]);
+      expect(c.read(gameProvider).at, 1);
+      g.selectAt(0, 0);
+      g.backspace();
+      expect(c.read(gameProvider).gaps[0], [Op.minus, Op.lparen], reason: 'nothing before the cursor');
+    });
+
+    test('the arrows stop at every gap between symbols', () async {
+      final c = await game({'number': '8131'});
+      final g = c.read(gameProvider.notifier);
+      g.select(0);
+      g.insert(Op.lparen);
+      g.insert(Op.sqrt);
+      expect(c.read(gameProvider).positions.take(4), [(0, 0), (0, 1), (0, 2), (1, 0)]);
+      g.step(-1);
+      expect((c.read(gameProvider).cursor, c.read(gameProvider).at), (0, 1));
     });
 
     test('backspace only removes symbols on the cursor side of "="', () async {
@@ -134,5 +196,18 @@ void main() {
         i % 50 == 49 ? g.setLevel(Level.values[(i ~/ 50) % 4]) : g.skip();
       }
     });
+  });
+}
+
+// Appended: how Firestore failures are classified for the user.
+void cloudErrorTests() {
+  test('dropped connections are reported as offline, not as an unexpected error', () {
+    expect(cloudError(TimeoutException('x')), CloudError.offline);
+    expect(cloudError(FirebaseException(plugin: 'cloud_firestore', code: 'unavailable')), CloudError.offline);
+    expect(cloudError(Exception('[cloud_firestore/unavailable] The service is currently unavailable.')),
+        CloudError.offline);
+    expect(cloudError(Exception('Failed to get document because the client is offline.')), CloudError.offline);
+    expect(cloudError(FirebaseException(plugin: 'cloud_firestore', code: 'permission-denied')), CloudError.denied);
+    expect(cloudError(StateError('boom')), CloudError.unknown);
   });
 }

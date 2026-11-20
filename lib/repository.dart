@@ -51,9 +51,22 @@ class Repo {
   DocumentReference<Map<String, dynamic>> get _doc =>
       FirebaseFirestore.instance.collection('users').doc(uid);
 
-  static const _timeout = Duration(seconds: 12);
+  static const _timeout = Duration(seconds: 8);
 
-  Future<Profile> _load() async => current = Profile.fromData((await _doc.get().timeout(_timeout)).data());
+  /// Runs [call] again after a dropped connection, which is common and brief:
+  /// up to three tries, a little further apart each time.
+  static Future<T> _retry<T>(Future<T> Function() call) async {
+    for (var attempt = 1; ; attempt++) {
+      try {
+        return await call().timeout(_timeout);
+      } catch (e) {
+        if (attempt == 3 || cloudError(e) == CloudError.denied) rethrow;
+        await Future<void>.delayed(Duration(milliseconds: 600 * attempt));
+      }
+    }
+  }
+
+  Future<Profile> _load() async => current = Profile.fromData((await _retry(_doc.get)).data());
 
   Future<Profile> profile() => _profile ??= _load();
 
@@ -63,20 +76,23 @@ class Repo {
     final p = await profile();
     if (p.isSolved(level, number)) return;
     // A transaction needs the server, so offline it fails within the timeout
-    // instead of queueing forever, and a retry can never score the number twice.
+    // instead of queueing forever, and trying again can never score the number
+    // twice: the transaction itself checks whether it was already saved.
     // ponytail: score is client-incremented; a cheater can edit their own doc. Move scoring to a Cloud Function if a public ranking is added.
-    await FirebaseFirestore.instance.runTransaction((tx) async {
-      if (Profile.fromData((await tx.get(_doc)).data()).isSolved(level, number)) return;
-      tx.set(_doc, {
-        'email': FirebaseAuth.instance.currentUser?.email,
-        'score': FieldValue.increment(level.points),
-        'solved': {
-          level.name: {
-            number: {'latex': latex, 'at': FieldValue.serverTimestamp()},
+    await _retry(
+      () => FirebaseFirestore.instance.runTransaction((tx) async {
+        if (Profile.fromData((await tx.get(_doc)).data()).isSolved(level, number)) return;
+        tx.set(_doc, {
+          'email': FirebaseAuth.instance.currentUser?.email,
+          'score': FieldValue.increment(level.points),
+          'solved': {
+            level.name: {
+              number: {'latex': latex, 'at': FieldValue.serverTimestamp()},
+            },
           },
-        },
-      }, SetOptions(merge: true));
-    }, timeout: _timeout, maxAttempts: 2).timeout(_timeout);
+        }, SetOptions(merge: true));
+      }, timeout: _timeout, maxAttempts: 2),
+    );
     p.score += level.points;
     p.solved[level]![number] = latex;
   }
@@ -85,9 +101,12 @@ class Repo {
 /// Why a Firestore call failed, so the UI can explain it in the user's language.
 enum CloudError { offline, denied, unknown }
 
-CloudError cloudError(Object? e) => switch (e) {
-  TimeoutException() => CloudError.offline,
-  FirebaseException(code: 'unavailable' || 'deadline-exceeded' || 'network-request-failed') => CloudError.offline,
-  FirebaseException(code: 'permission-denied' || 'unauthenticated') => CloudError.denied,
-  _ => CloudError.unknown,
-};
+CloudError cloudError(Object? e) {
+  if (e is TimeoutException) return CloudError.offline;
+  // On the web the SDK does not always keep the error code in a typed field,
+  // so the text is checked too.
+  final text = (e is FirebaseException ? '${e.code} ${e.message}' : '$e').toLowerCase();
+  if (text.contains('permission-denied') || text.contains('unauthenticated')) return CloudError.denied;
+  const network = ['unavailable', 'deadline-exceeded', 'network', 'offline', 'connection', 'failed to fetch'];
+  return network.any(text.contains) ? CloudError.offline : CloudError.unknown;
+}
